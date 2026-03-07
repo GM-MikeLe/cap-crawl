@@ -1,0 +1,19 @@
+{
+  "source_sitemaps": [
+    "saigoncenter_en_sitemap.xml"
+  ],
+  "crawled_at": "2026-03-07T08:36:11.443577+00:00",
+  "total_products": 1,
+  "products": [
+    {
+      "name": "Volvic Volcanic Mineral Water PET 500ml",
+      "price": 0,
+      "currency": "VND",
+      "description": "\"SUITABLE FOR: Conferences, office meetings, formal receptions, events, or hand-held, travel, school, office, sports, and other occasions that require the use of lightweight, easy-to-handle products.\n PRODUCT INFORMATION: Volvic is a natural mineral water formed from deep inside the volcanic moutain located in the heart of France and has been purified for 5 years through 6 geological layers of the volcano. Unique flavor with high silica content, which is essential for bones, hair, skin and nails\"",
+      "ingredients": "100% natural mineral water - Nutritional ingredients: Energy 0 kcal, Protein 0 g, Fat 0 g, Saturated fat 0 g, Trans Fat 0 g, Carbohydrate 0 g, Sugar 0 g, Sodium 1,16 mg",
+      "instruction_for_use": "Drink directly to quench your thirst - Warning: Do not use the product after the expiry date",
+      "storage_instructions": "Store in a cool, dry place, away from direct sunlight",
+      "country": "France"
+    }
+  ]
+}

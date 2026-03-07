@@ -1,0 +1,4 @@
+playwright>=1.40.0
+spacy>=3.7.0
+pycountry>=24.0
+nltk>=3.8.0
