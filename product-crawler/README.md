@@ -1,9 +1,10 @@
 # Product crawler
 
-Two modes:
+Three modes:
 
 1. **Single URL** (`extract_one_product.py`) — test one product page (no sitemap).
-2. **Full crawl** (`crawl_products.py` or `crawl_products_headed.py`) — parse sitemap(s), visit each URL, extract products + country, write JSON (and optionally CSV with `--csv FILE`).
+2. **Full crawl** (`crawl_products.py`, `crawl_products_headed.py`) — parse sitemap(s), visit each URL, extract products + country, write JSON (and optionally CSV).
+3. **Stealth crawl** (`crawl_products_stealth.py`) — minimal setup: playwright-stealth only, headless, low delay. Two-phase: crawl product info (no country per URL) → batch extract country → JSON + CSV. Skips products without details.
 
 ### Module layout
 
@@ -19,6 +20,7 @@ Entry points and core logic live at the project root; shared helpers live in `ut
 | → `utils/export_utils.py` | `write_products_csv()` — export products to CSV. |
 | `crawl_products.py` | Crawl orchestration (headless). |
 | `crawl_products_headed.py` | Same as above with `--headed` (visible browser). |
+| `crawl_products_stealth.py` | Stealth-only, two-phase (crawl → country), minimal delay. No cookies/saved session. |
 
 ## Setup (run in WSL)
 
@@ -83,6 +85,24 @@ python crawl_products_headed.py --headed --delay 8 --limit 20 saigoncenter_en_si
 ```
 
 Options: `--workers N` (default 1), `--delay SECS` (default 5), `--limit N` (max products), `--skip N` (skip first N URLs for batching), `--out FILE` (default `products.json`), `--csv FILE` (optional: also export products to CSV). Output JSON has `source_sitemaps`, `crawled_at`, `total_products`, and `products` (array). Note: `--skip` is by URL index in the sitemap, not by product count.
+
+### Stealth crawl (minimal, two-phase)
+
+Uses playwright-stealth only (no cookies, no saved session, headless). Phase 1: crawl product info without country; Phase 2: batch extract country from JSON. Keeps only products with details (description).
+
+```bash
+python crawl_products_stealth.py --limit 50 saigoncenter_en_sitemap.xml --out products.json --csv products.csv
+
+# Batching with skip
+python crawl_products_stealth.py --skip 500 --limit 100 --out batch2.json --csv batch2.csv saigoncenter_en_sitemap.xml
+
+# Parallel + custom delay
+python crawl_products_stealth.py --workers 3 --delay 0.5 --limit 100 saigoncenter_en_sitemap.xml
+```
+
+Options: `--workers` (default 1), `--delay` (default 0.5), `--limit`, `--skip`, `--out` (default `products_stealth.json`), `--csv`.
+
+**Experimental:** `crawl_products_experimental.py` — warmup URL, restart-every, storage-state/solve-once (latter commented out). Stealth + headless; for testing.
 
 ### Reducing Cloudflare / IP blocking risk
 

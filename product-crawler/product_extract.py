@@ -95,11 +95,14 @@ async def get_meta_content_async(
     return value.strip() if value else None
 
 
-async def get_body_text_async(page, selector: str) -> str | None:
-    """Async: get trimmed text content of first match."""
-    loc = page.locator(selector).first
-    text = await loc.text_content()
-    return text.strip() if text else None
+async def get_body_text_async(page, selector: str, timeout_ms: int = 5000) -> str | None:
+    """Async: get trimmed text content of first match. Returns None if missing or timeout."""
+    try:
+        loc = page.locator(selector).first.set_timeout(timeout_ms)
+        text = await loc.text_content()
+        return text.strip() if text else None
+    except Exception:
+        return None
 
 
 async def extract_product_async(page) -> dict:

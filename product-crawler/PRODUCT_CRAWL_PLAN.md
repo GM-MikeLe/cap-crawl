@@ -2,7 +2,7 @@
 
 Plan for parsing sitemap URLs, visiting each page, extracting **product-only** metadata from HTML, and exporting to JSON.
 
-**Implementation status:** Implemented. Entry points: `crawl_products.py`, `crawl_products_headed.py`, `extract_one_product.py`. Core: `product_extract.py`, `config.py`. Shared utilities: `utils/` (sitemap, cookies, CSV export). See README for module layout.
+**Implementation status:** Implemented. Entry points: `crawl_products.py`, `crawl_products_headed.py`, `crawl_products_stealth.py`, `extract_one_product.py`. Core: `product_extract.py`, `config.py`. Shared utilities: `utils/` (sitemap, cookies, CSV export). See README for module layout.
 
 ---
 
@@ -54,7 +54,7 @@ Each product in the final JSON is one object. Fields:
 - **Input:** Loaded HTML/DOM for one product URL.
 - **Action:** For each field in the product schema, extract using the selectors in Section 3 (meta tags + body tabs).
 - **Output:** One object per product; missing fields `null` or omitted.
-- **Implemented:** `extract_product()` / `extract_product_async()` in `product_extract.py`.
+- **Implemented:** `extract_product()` / `extract_product_async()` in `product_extract.py`. Body selectors use 5s timeout; missing/slow elements return `None` (no crash).
 
 ---
 
@@ -74,12 +74,12 @@ Each product in the final JSON is one object. Fields:
 
 ---
 
-### Step 7: Country extraction (inline, not post-crawl)
+### Step 7: Country extraction
 
-- **Input:** Product dict (name, description, ingredients) right after extraction.
+- **Input:** Product dict (name, description, ingredients).
 - **Action:** `extract_country(product)` in `product_extract.py`: concatenate name + description + ingredients; try pycountry (country/subdivision name match) first, then spaCy NER (GPE, LOC). Accent normalization; English stopwords filtered. Set `product["country"]` to result or `""`.
-- **Output:** Same product object with `country` field before appending to results.
-- **Implemented:** Called immediately after `extract_product_async()` in `crawl_products.py`; no separate post-crawl JSON pass.
+- **Output:** Same product object with `country` field.
+- **Implemented:** `crawl_products.py` / `crawl_products_headed.py` — inline per product. `crawl_products_stealth.py` — batch after crawl (Phase 2).
 
 ---
 
@@ -125,15 +125,24 @@ Each product in the final JSON is one object. Fields:
 
 ## 4. Flow summary
 
+**Standard crawlers** (`crawl_products.py`, `crawl_products_headed.py`):
+
 ```
-Sitemap XML
-    → Step 1: Parse + URL filter (hcm-taka segment, exclude category slugs) → List of URLs
-    → Step 2/3: For each URL: fetch (Playwright) → og:type check → if product: extract + country → add to list
-    → Step 6: Write JSON (source_sitemaps, crawled_at, total_products, products with country)
-    → Step 8: If --csv FILE: write CSV (one row per product, same columns as schema)
+Sitemap XML → Parse + URL filter → For each URL: fetch → og:type check → if product: extract + country → add to list → Write JSON + (optional) CSV
 ```
 
-CLI: `--workers`, `--delay`, `--limit`, `--skip`, `--out`, `--csv`, `--proxy`, `--use-chrome`, `--cookies` (see README).
+**Stealth crawler** (`crawl_products_stealth.py`) — two-phase:
+
+```
+Sitemap XML → Parse + URL filter
+    → Phase 1: For each URL: fetch (stealth) → og:type check → if product: extract (no country) → if has details: add to list
+    → Phase 2: Batch extract country for all products
+    → Write JSON + (optional) CSV
+```
+
+Only products with a non-empty description (Details) are kept.
+
+CLI: `--workers`, `--delay`, `--limit`, `--skip`, `--out`, `--csv`, `--proxy`, `--use-chrome`, `--cookies` (see README). Stealth crawler: no cookies/saved session, headless, minimal delay.
 
 ---
 
@@ -149,7 +158,11 @@ CLI: `--workers`, `--delay`, `--limit`, `--skip`, `--out`, `--csv`, `--proxy`, `
 ## 6. Implementation status and file layout
 
 - **Steps 1–8** are implemented.
-- **Extraction:** `product_extract.py` (selectors, country via pycountry + spaCy). **Config:** `config.py` (timeouts, content-ready selector).
-- **Utils** (in `utils/`): sitemap parsing and URL filter (`utils/sitemap_utils.py`), cookie loading (`utils/cookie_utils.py`), CSV export (`utils/export_utils.py`). Crawlers use `from utils import ...`.
-- **Crawl orchestration:** `crawl_products.py` (headless), `crawl_products_headed.py` (optional `--headed`). Optional CSV via `--csv FILE`.
+- **Extraction:** `product_extract.py` (selectors, country via pycountry + spaCy). Body selectors use 5s timeout; return `None` on missing/timeout. **Config:** `config.py` (timeouts, content-ready selector).
+- **Utils** (in `utils/`): sitemap parsing and URL filter, cookie loading, CSV export. Crawlers use `from utils import ...`.
+- **Crawl orchestration:**
+  - `crawl_products.py` — headless.
+  - `crawl_products_headed.py` — optional `--headed`.
+  - `crawl_products_stealth.py` — stealth only, headless, two-phase (crawl → batch country), keeps only products with details. Minimal delay (default 0.5s).
+  - `crawl_products_experimental.py` — warmup, restart-every, storage-state/solve-once (commented). For testing.
 - Run instructions and full module layout: **README.md**.
