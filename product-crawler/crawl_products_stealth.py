@@ -8,53 +8,50 @@ Stealth-only product crawl: minimal setup for speed.
   1. Phase 1: Crawl URLs, extract product info (no country), save to JSON
   2. Phase 2: Add country from JSON (batch), write final JSON and CSV
 
-Usage:
+Usage (run with project venv activated: source .venv/bin/activate):
+
+  # Product URLs from sitemap XML (optional: add categories via --category-mapping)
   python crawl_products_stealth.py --limit 10 saigoncenter_en_sitemap.xml --out products.json --csv products.csv
+  python crawl_products_stealth.py --category-mapping category_product_mapping.json saigoncenter_en_sitemap.xml --out products.json
+
+  # Product URLs (and categories) from mapping JSON — no sitemap, no separate category step
+  python crawl_products_stealth.py --from-mapping category_product_mapping.json --out products.json --csv products.csv
 
 Options:
-  --workers N   Concurrent pages (default 1)
-  --delay SECS  Seconds between requests (default 0.5, min ~0.3)
-  --limit N     Max products to extract
-  --skip N      Skip first N URLs
-  --out FILE    Output JSON path (default products_stealth.json)
-  --csv FILE    Also write CSV in final step
+  --workers N      Concurrent pages (default 1)
+  --delay SECS     Seconds between requests (default 0.5, min ~0.3)
+  --limit N        Max products to extract
+  --skip N         Skip first N URLs
+  --out FILE       Output JSON path (default products_stealth.json)
+  --csv FILE       Also write CSV in final step
+  --category-mapping FILE  When using sitemaps: set product category from this JSON
+  --from-mapping FILE      Use product URLs and categories from this JSON instead of sitemaps
 """
 
 import argparse
 import asyncio
 import json
-import random
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from product_extract import (
-    apply_quantity_to_product,
-    extract_country,
-    extract_product_async,
-    get_meta_content_async,
+from category_mapping import (
+    add_countries_and_categories_to_products,
+    load_urls_and_category_map_from_mapping,
 )
 from config import (
+    BROWSER_LOCALE,
+    BROWSER_USER_AGENT,
+    BROWSER_VIEWPORT,
     CONTENT_READY_SELECTOR,
     FALLBACK_SLEEP_AFTER_SELECTOR_TIMEOUT_SEC,
     PAGE_LOAD_TIMEOUT_MS,
     PER_URL_TIMEOUT_SEC,
     SELECTOR_WAIT_TIMEOUT_MS,
 )
-from utils import is_product_url, parse_sitemap, write_products_csv
-
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-)
-
-
-async def _delay_async(delay_sec: float) -> None:
-    """Minimum delay (floor 0.3s) for speed."""
-    lo = max(0.3, delay_sec * 0.3)
-    hi = max(lo, delay_sec * 1.0)
-    await asyncio.sleep(random.uniform(lo, hi))
+from product_extract import apply_quantity_to_product, extract_product_async, get_meta_content_async
+from utils import delay_async, is_product_url, normalize_product_url, parse_sitemap, write_products_csv
 
 
 async def _load_page_and_get_og_type(page, url: str):
@@ -90,9 +87,9 @@ async def _crawl_async(
     async with Stealth().use_async(async_playwright()) as p:
         browser = await p.chromium.launch(headless=True)
         ctx_opts: dict = {
-            "user_agent": USER_AGENT,
-            "viewport": {"width": 1920, "height": 1080},
-            "locale": "en-US",
+            "user_agent": BROWSER_USER_AGENT,
+            "viewport": BROWSER_VIEWPORT,
+            "locale": BROWSER_LOCALE,
         }
         context = await browser.new_context(**ctx_opts)
 
@@ -124,23 +121,23 @@ async def _crawl_async(
                     except (asyncio.CancelledError, Exception):
                         pass
                     print(f"  Skip (timeout) ({time.perf_counter() - t0:.1f}s)", file=sys.stderr)
-                    await _delay_async(delay_sec)
+                    await delay_async(delay_sec)
                     continue
                 except Exception as e:
                     print(f"  Skip (load error): {e} ({time.perf_counter() - t0:.1f}s)", file=sys.stderr)
                     await page.close()
-                    await _delay_async(delay_sec)
+                    await delay_async(delay_sec)
                     continue
 
                 if og_type is None:
                     print(f"  Skip (no og:type) ({time.perf_counter() - t0:.1f}s)", file=sys.stderr)
                     await page.close()
-                    await _delay_async(delay_sec)
+                    await delay_async(delay_sec)
                     continue
                 if og_type != "product":
                     print(f"  Skip (og:type={og_type}) ({time.perf_counter() - t0:.1f}s)", file=sys.stderr)
                     await page.close()
-                    await _delay_async(delay_sec)
+                    await delay_async(delay_sec)
                     continue
 
                 product = await extract_product_async(page)
@@ -148,25 +145,20 @@ async def _crawl_async(
                 # Skip products without details (only name, no description)
                 if not (product.get("description") or "").strip():
                     print(f"  Skip (no details) ({time.perf_counter() - t0:.1f}s)", file=sys.stderr)
-                    await _delay_async(delay_sec)
+                    await delay_async(delay_sec)
                     continue
-                # No country here - phase 2 adds it
+                # Phase 2 adds country and category; store canonical URL for lookup
+                product["url"] = normalize_product_url(url)
                 elapsed = time.perf_counter() - t0
 
                 async with lock:
                     products.append(product)
                     product_count[0] += 1
                 print(f"  -> product: {product.get('name', '')[:50]}... ({elapsed:.1f}s)", file=sys.stderr)
-                await _delay_async(delay_sec)
+                await delay_async(delay_sec)
 
         await asyncio.gather(*[fetch_one(w) for w in range(workers)])
         await browser.close()
-
-
-def add_countries_to_products(products: list[dict]) -> None:
-    """Phase 2: Add country to each product (in-place)."""
-    for p in products:
-        p["country"] = extract_country(p)
 
 
 def crawl(
@@ -178,23 +170,33 @@ def crawl(
     out_path: Path,
     csv_path: Path | None = None,
     workers: int = 1,
+    category_mapping_path: Path | None = None,
+    from_mapping_path: Path | None = None,
 ) -> None:
-    all_urls: list[str] = []
-    for path in sitemap_paths:
-        if not path.exists():
-            print(f"Warning: sitemap not found: {path}", file=sys.stderr)
-            continue
-        urls = parse_sitemap(path)
-        all_urls.extend(urls)
-        print(f"Parsed {path.name}: {len(urls)} URLs", file=sys.stderr)
-    all_urls = list(dict.fromkeys(all_urls))
-    before = len(all_urls)
-    all_urls = [u for u in all_urls if is_product_url(u)]
-    if len(all_urls) < before:
-        print(
-            f"Filtered to product URLs: {len(all_urls)} (dropped {before - len(all_urls)})",
-            file=sys.stderr,
-        )
+    category_reverse_map: dict[str, str] | None = None
+
+    if from_mapping_path is not None and from_mapping_path.exists():
+        # Product URLs and categories from mapping JSON; skip sitemap and separate category step
+        all_urls, category_reverse_map = load_urls_and_category_map_from_mapping(from_mapping_path)
+        print(f"Loaded {len(all_urls)} product URLs from {from_mapping_path.name} (categories included)", file=sys.stderr)
+    else:
+        all_urls = []
+        for path in sitemap_paths:
+            if not path.exists():
+                print(f"Warning: sitemap not found: {path}", file=sys.stderr)
+                continue
+            urls = parse_sitemap(path)
+            all_urls.extend(urls)
+            print(f"Parsed {path.name}: {len(urls)} URLs", file=sys.stderr)
+        all_urls = list(dict.fromkeys(all_urls))
+        before = len(all_urls)
+        all_urls = [u for u in all_urls if is_product_url(u)]
+        if len(all_urls) < before:
+            print(
+                f"Filtered to product URLs: {len(all_urls)} (dropped {before - len(all_urls)})",
+                file=sys.stderr,
+            )
+
     if skip > 0:
         all_urls = all_urls[skip:]
         print(f"Skipped first {skip} URLs; {len(all_urls)} left", file=sys.stderr)
@@ -213,14 +215,21 @@ def crawl(
         )
     )
 
-    # Phase 2: add country and quantity (batch, no network)
-    print(f"Phase 2: extract country and quantity for {len(products)} products", file=sys.stderr)
-    add_countries_to_products(products)
+    # Phase 2: add country and category (with workers), then quantity
+    # When from_mapping was used, category_reverse_map is already set; else use category_mapping_path
+    print(f"Phase 2: extract country and category for {len(products)} products (workers={workers})", file=sys.stderr)
+    add_countries_and_categories_to_products(
+        products,
+        None if category_reverse_map is not None else category_mapping_path,
+        workers=workers,
+        category_reverse_map=category_reverse_map,
+    )
     for p in products:
         apply_quantity_to_product(p)
 
     out = {
-        "source_sitemaps": [str(p) for p in sitemap_paths],
+        "source_sitemaps": [str(p) for p in sitemap_paths] if from_mapping_path is None else [],
+        "source_mapping": str(from_mapping_path) if from_mapping_path is not None else None,
         "crawled_at": datetime.now(timezone.utc).isoformat(),
         "total_products": len(products),
         "products": products,
@@ -252,6 +261,20 @@ def main():
     parser.add_argument("--skip", type=int, default=0, help="Skip first N URLs")
     parser.add_argument("--out", type=Path, default=Path("products_stealth.json"), help="Output JSON path")
     parser.add_argument("--csv", type=Path, default=None, metavar="FILE", help="Also write CSV in final step")
+    parser.add_argument(
+        "--category-mapping",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="When using sitemaps: JSON from build_category_product_mapping.py to set product category",
+    )
+    parser.add_argument(
+        "--from-mapping",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Use product URLs (and categories) from this mapping JSON instead of sitemaps; skip --category-mapping",
+    )
     args = parser.parse_args()
 
     if args.workers < 1:
@@ -260,13 +283,19 @@ def main():
         parser.error("--skip must be >= 0")
 
     base = Path(__file__).parent
-    if args.sitemaps:
-        sitemap_paths = args.sitemaps
+    if args.from_mapping is not None:
+        if not args.from_mapping.exists():
+            print(f"Error: --from-mapping file not found: {args.from_mapping}", file=sys.stderr)
+            sys.exit(1)
+        sitemap_paths = []  # ignored when from_mapping is set
     else:
-        sitemap_paths = [base / "saigoncenter_en_sitemap.xml"]
-    if not sitemap_paths:
-        print("No sitemap files.", file=sys.stderr)
-        sys.exit(1)
+        if args.sitemaps:
+            sitemap_paths = args.sitemaps
+        else:
+            sitemap_paths = [base / "saigoncenter_en_sitemap.xml"]
+        if not sitemap_paths:
+            print("No sitemap files. Use sitemap path(s) or --from-mapping FILE.", file=sys.stderr)
+            sys.exit(1)
 
     crawl(
         sitemap_paths,
@@ -276,6 +305,8 @@ def main():
         out_path=args.out,
         csv_path=args.csv,
         workers=args.workers,
+        category_mapping_path=args.category_mapping,
+        from_mapping_path=args.from_mapping,
     )
 
 

@@ -17,9 +17,17 @@ CSV_FIELDNAMES = (
     "instruction_for_use",
     "storage_instructions",
     "country",
+    "category",
     "quantity_value",
     "quantity_unit",
+    "url",
 )
+
+
+def _csv_cell(row: dict, key: str) -> str:
+    """One cell for CSV: empty string if value is None, else str(value)."""
+    val = row.get(key)
+    return "" if val is None else str(val)
 
 
 def write_products_csv(products: list[dict], path: Path) -> None:
@@ -34,5 +42,5 @@ def write_products_csv(products: list[dict], path: Path) -> None:
         )
         w.writeheader()
         for row in products:
-            out = {k: "" if row.get(k) is None else str(row.get(k)) for k in CSV_FIELDNAMES}
+            out = {k: _csv_cell(row, k) for k in CSV_FIELDNAMES}
             w.writerow(out)

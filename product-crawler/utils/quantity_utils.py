@@ -4,6 +4,14 @@ Used to derive quantity_value and quantity_unit from product name for JSON/CSV.
 """
 
 import re
+from typing import TypedDict
+
+
+class QuantityResult(TypedDict):
+    """Result of parse_quantity_from_text (always has both keys)."""
+    quantity_value: int | float | None
+    quantity_unit: str
+
 
 # Supported units: longer forms first so "kg" matches before "g".
 QUANTITY_UNITS = ("kg", "ml", "L", "g", "pcs")
@@ -19,11 +27,11 @@ _QUANTITY_PATTERN = re.compile(
 _UNIT_CANONICAL = {u.lower(): u if u != "L" else "L" for u in QUANTITY_UNITS}
 
 
-def parse_quantity_from_text(text: str) -> dict:
+def parse_quantity_from_text(text: str) -> QuantityResult:
     """
     Extract first quantity + unit from text (e.g. product name).
 
-    Returns dict with:
+    Returns QuantityResult with:
       - quantity_value: int or float, or None if no match
       - quantity_unit: str, one of "g", "kg", "ml", "L", "pcs", or "" if no match
 

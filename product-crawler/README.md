@@ -8,20 +8,25 @@ Three modes:
 
 ### Module layout
 
-Entry points and core logic live at the project root; shared helpers live in `utils/`:
+Entry points and core logic live at the project root; shared helpers live in `utils/` and `category_mapping.py`:
 
 | Module | Purpose |
 |--------|---------|
-| `config.py` | Timeouts, selectors (content-ready, etc.). |
-| `product_extract.py` | Extract product fields from HTML; country via pycountry + spaCy. |
+| `config.py` | Timeouts, selectors (content-ready, category page), browser (user agent, viewport, locale), delay (min sec, factors). Single place to tune behavior. |
+| `product_extract.py` | Extract product fields from HTML; country via pycountry + spaCy (lazy-loaded). Sync and async extractors share `_build_product_dict()`. |
+| `category_mapping.py` | Load category mapping JSON; `build_product_to_category_map()`, `add_countries_and_categories_to_products()`, `load_urls_and_category_map_from_mapping()`. Used by stealth crawler for phase 2 and `--from-mapping`. |
 | **`utils/`** | Shared utilities (use `from utils import ...`): |
-| → `utils/sitemap_utils.py` | `parse_sitemap()`, `is_product_url()` — sitemap XML and URL filtering. |
+| → `utils/sitemap_utils.py` | `parse_sitemap()`, `is_product_url()`, `normalize_product_url()`, `normalize_pagination_url()`, `url_path_base()`, `url_store_segment()`, `is_parent_category_url()` — sitemap XML and URL filtering. |
+| → `utils/crawl_utils.py` | `delay_async()` — random delay between requests (uses config). |
 | → `utils/cookie_utils.py` | `load_cookies()` — load and normalize cookies for Playwright. |
-| → `utils/export_utils.py` | `write_products_csv()` — export products to CSV. |
-| → `utils/quantity_utils.py` | `parse_quantity_from_text()` — parse quantity value + unit (g, kg, ml, L, pcs) from text. |
+| → `utils/export_utils.py` | `write_products_csv()`, `CSV_FIELDNAMES` — export products to CSV. |
+| → `utils/quantity_utils.py` | `parse_quantity_from_text()` → `QuantityResult`; quantity value + unit (g, kg, ml, L, pcs) from text. |
 | `crawl_products.py` | Crawl orchestration (headless). |
 | `crawl_products_headed.py` | Same as above with `--headed` (visible browser). |
-| `crawl_products_stealth.py` | Stealth-only, two-phase (crawl → country), minimal delay. No cookies/saved session. |
+| `crawl_products_stealth.py` | Stealth-only, two-phase (crawl → country/category via `category_mapping`), minimal delay. No cookies/saved session. |
+| `build_category_product_mapping.py` | Crawl category XML (parent categories only); collect product links per category with pagination; output JSON. Uses `config` and `utils` (URL helpers, `delay_async`). Entry: `run_category_crawl()` then write JSON. |
+
+Refactoring details (config consolidation, shared delay/URL/category logic): see `REFACTOR_IMPLEMENTATION_PLAN.md`.
 
 ## Setup (run in WSL)
 
@@ -89,9 +94,11 @@ Options: `--workers N` (default 1), `--delay SECS` (default 5), `--limit N` (max
 
 ### Stealth crawl (minimal, two-phase)
 
-Uses playwright-stealth only (no cookies, no saved session, headless). Phase 1: crawl product info without country; Phase 2: batch extract country from JSON. Keeps only products with details (description).
+Uses playwright-stealth only (no cookies, no saved session, headless). Phase 1: crawl product info without country; Phase 2: batch extract country (and optional category) from JSON. Keeps only products with details (description). **Run with the project venv activated** (`source .venv/bin/activate`).
 
 ```bash
+source .venv/bin/activate
+
 python crawl_products_stealth.py --limit 50 saigoncenter_en_sitemap.xml --out products.json --csv products.csv
 
 # Batching with skip
@@ -99,9 +106,38 @@ python crawl_products_stealth.py --skip 500 --limit 100 --out batch2.json --csv 
 
 # Parallel + custom delay
 python crawl_products_stealth.py --workers 3 --delay 0.5 --limit 100 saigoncenter_en_sitemap.xml
+
+# With category mapping (run build_category_product_mapping.py first)
+python crawl_products_stealth.py --category-mapping category_product_mapping.json --limit 50 saigoncenter_en_sitemap.xml --out products.json --csv products.csv
+
+# Product URLs FROM the mapping JSON (no sitemap); categories come from the same file (skip separate mapping step)
+python crawl_products_stealth.py --from-mapping category_product_mapping.json --out products.json --csv products.csv
+python crawl_products_stealth.py --from-mapping category_product_mapping.json --limit 100 --out products.json
 ```
 
-Options: `--workers` (default 1), `--delay` (default 0.5), `--limit`, `--skip`, `--out` (default `products_stealth.json`), `--csv`.
+Options: `--workers` (default 1), `--delay` (default 0.5), `--limit`, `--skip`, `--out` (default `products_stealth.json`), `--csv`, `--category-mapping FILE` (when using sitemaps: set `product.category` from this JSON), `--from-mapping FILE` (use product URLs and categories from this JSON instead of sitemaps).
+
+### Category mapping (parent category → products)
+
+To attach a **category** to each product, build a mapping from category listing pages first. You can then either pass it to the stealth crawler when using a sitemap, or use it as the **source of product URLs** so categories are known in advance. **Use the project venv.**
+
+```bash
+source .venv/bin/activate
+
+# 1. Crawl category XML (parent categories only); collect product links
+python build_category_product_mapping.py category.xml --out category_product_mapping.json
+
+# Optional: test with a few categories
+python build_category_product_mapping.py category.xml --limit 5 --out category_product_mapping.json
+
+# 2a. Crawl products from sitemap and set category from the mapping
+python crawl_products_stealth.py saigoncenter_en_sitemap.xml --category-mapping category_product_mapping.json --out products.json --csv products.csv
+
+# 2b. Or: crawl products FROM the mapping file (no sitemap); categories are already in the file
+python crawl_products_stealth.py --from-mapping category_product_mapping.json --out products.json --csv products.csv
+```
+
+See `CATEGORY_MAPPING_IMPLEMENTATION_PLAN.md` for details.
 
 **Experimental:** `crawl_products_experimental.py` — warmup URL, restart-every, storage-state/solve-once (latter commented out). Stealth + headless; for testing.
 
@@ -155,6 +191,8 @@ The script loads the cookies into the browser context before visiting product UR
 - `name`, `price`, `currency`, `description` (Details tab, fallback meta)
 - `ingredients`, `instruction_for_use`, `storage_instructions` (optional)
 - `country` (pycountry + spaCy NER on name/description/ingredients; `""` if none or if model not available)
+- `category` (subcategory URL from `--category-mapping` JSON; `""` if not provided or no match)
+- `url` (canonical product page URL; used for category lookup)
 - `quantity_value`, `quantity_unit` (parsed from name: g, kg, ml, L, pcs; first match; empty if none)
 
 See `PRODUCT_CRAWL_PLAN.md` for the full plan, file layout, and selectors.
