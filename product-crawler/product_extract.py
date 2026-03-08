@@ -232,3 +232,12 @@ def extract_country(product: dict) -> str:
     except (ImportError, OSError):
         pass
     return ""
+
+
+def apply_quantity_to_product(product: dict) -> None:
+    """Set quantity_value and quantity_unit on product from product name. Mutates product in place."""
+    from utils.quantity_utils import parse_quantity_from_text
+
+    parsed = parse_quantity_from_text(product.get("name") or "")
+    product["quantity_value"] = parsed.get("quantity_value")
+    product["quantity_unit"] = parsed.get("quantity_unit") or ""

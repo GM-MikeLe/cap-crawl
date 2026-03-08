@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from product_extract import (
+    apply_quantity_to_product,
     extract_country,
     extract_product_async,
     get_meta_content_async,
@@ -212,9 +213,11 @@ def crawl(
         )
     )
 
-    # Phase 2: add country (batch, no network)
-    print(f"Phase 2: extract country for {len(products)} products", file=sys.stderr)
+    # Phase 2: add country and quantity (batch, no network)
+    print(f"Phase 2: extract country and quantity for {len(products)} products", file=sys.stderr)
     add_countries_to_products(products)
+    for p in products:
+        apply_quantity_to_product(p)
 
     out = {
         "source_sitemaps": [str(p) for p in sitemap_paths],

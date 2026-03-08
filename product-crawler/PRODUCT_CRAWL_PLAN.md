@@ -20,6 +20,8 @@ Each product in the final JSON is one object. Fields:
 | `instruction_for_use` | string | Instructions for use (optional) |
 | `storage_instructions` | string | Storage instructions (optional) |
 | `country` | string | Country/place of origin (pycountry + spaCy NER on name/description/ingredients; empty string if not found) |
+| `quantity_value` | number or null | Numeric quantity parsed from name (e.g. 500, 1.5); null if none found |
+| `quantity_unit` | string | Unit parsed from name: one of `g`, `kg`, `ml`, `L`, `pcs`, or `""` if none |
 
 ---
 
@@ -80,6 +82,15 @@ Each product in the final JSON is one object. Fields:
 - **Action:** `extract_country(product)` in `product_extract.py`: concatenate name + description + ingredients; try pycountry (country/subdivision name match) first, then spaCy NER (GPE, LOC). Accent normalization; English stopwords filtered. Set `product["country"]` to result or `""`.
 - **Output:** Same product object with `country` field.
 - **Implemented:** `crawl_products.py` / `crawl_products_headed.py` — inline per product. `crawl_products_stealth.py` — batch after crawl (Phase 2).
+
+---
+
+### Step 7b: Quantity extraction
+
+- **Input:** Product dict (name).
+- **Action:** `apply_quantity_to_product(product)` in `product_extract.py`: uses `parse_quantity_from_text()` from `utils/quantity_utils.py` to find first match of number + unit (g, kg, ml, L, pcs) in name. Sets `product["quantity_value"]` and `product["quantity_unit"]`.
+- **Output:** Same product object with `quantity_value` (number or null) and `quantity_unit` (string or "").
+- **Implemented:** All crawlers call after country; stealth does it in Phase 2 with country.
 
 ---
 

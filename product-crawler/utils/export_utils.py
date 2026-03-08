@@ -17,6 +17,8 @@ CSV_FIELDNAMES = (
     "instruction_for_use",
     "storage_instructions",
     "country",
+    "quantity_value",
+    "quantity_unit",
 )
 
 

@@ -18,6 +18,7 @@ Entry points and core logic live at the project root; shared helpers live in `ut
 | → `utils/sitemap_utils.py` | `parse_sitemap()`, `is_product_url()` — sitemap XML and URL filtering. |
 | → `utils/cookie_utils.py` | `load_cookies()` — load and normalize cookies for Playwright. |
 | → `utils/export_utils.py` | `write_products_csv()` — export products to CSV. |
+| → `utils/quantity_utils.py` | `parse_quantity_from_text()` — parse quantity value + unit (g, kg, ml, L, pcs) from text. |
 | `crawl_products.py` | Crawl orchestration (headless). |
 | `crawl_products_headed.py` | Same as above with `--headed` (visible browser). |
 | `crawl_products_stealth.py` | Stealth-only, two-phase (crawl → country), minimal delay. No cookies/saved session. |
@@ -154,5 +155,6 @@ The script loads the cookies into the browser context before visiting product UR
 - `name`, `price`, `currency`, `description` (Details tab, fallback meta)
 - `ingredients`, `instruction_for_use`, `storage_instructions` (optional)
 - `country` (pycountry + spaCy NER on name/description/ingredients; `""` if none or if model not available)
+- `quantity_value`, `quantity_unit` (parsed from name: g, kg, ml, L, pcs; first match; empty if none)
 
 See `PRODUCT_CRAWL_PLAN.md` for the full plan, file layout, and selectors.

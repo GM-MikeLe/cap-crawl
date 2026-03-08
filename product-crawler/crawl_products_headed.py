@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from product_extract import (
+    apply_quantity_to_product,
     extract_country,
     extract_product_async,
     get_meta_content_async,
@@ -158,6 +159,7 @@ async def _crawl_async(
                 product = await extract_product_async(page)
                 await page.close()
                 product["country"] = extract_country(product)
+                apply_quantity_to_product(product)
                 elapsed = time.perf_counter() - t0
 
                 async with lock:
