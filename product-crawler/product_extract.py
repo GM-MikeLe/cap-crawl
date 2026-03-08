@@ -89,8 +89,6 @@ async def get_meta_content_async(
 ) -> str | None:
     """Async: get content attribute of meta[property="..."]. Optional timeout_ms to avoid long waits."""
     loc = page.locator(f'meta[property="{property_value}"]').first
-    if timeout_ms is not None:
-        loc = loc.set_timeout(timeout_ms)
     value = await loc.get_attribute("content")
     return value.strip() if value else None
 
@@ -98,8 +96,8 @@ async def get_meta_content_async(
 async def get_body_text_async(page, selector: str, timeout_ms: int = 5000) -> str | None:
     """Async: get trimmed text content of first match. Returns None if missing or timeout."""
     try:
-        loc = page.locator(selector).first.set_timeout(timeout_ms)
-        text = await loc.text_content()
+        loc = page.locator(selector).first
+        text = await loc.text_content(timeout=timeout_ms)
         return text.strip() if text else None
     except Exception:
         return None
